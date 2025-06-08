@@ -11,7 +11,8 @@ def init_localization_manager():
     Initialize localization manager.
     Load GUI translations JSON file.
     """
-    FileManager.load_localization("translation.json")
+    # Assuming EM.LOCALE is set before this is called
+    FileManager.load_localization(EM.LOCALE)
 
 
 class FileManager:
@@ -22,27 +23,63 @@ class FileManager:
 
     ASSETS_DIR = "assets"
     _LOCALIZATION: Dict[str, str] = dict()
+    TRANSLATION_FILE_PATH = join(dirname(__file__), "translation.json")
 
     @staticmethod
-    def load_localization(file: str):
+    def load_localization(locale_name: str):
         """
-        Read localization file and store locale defined with environmental variable.
+        Loads localization data for the given locale.
+        If a base language (e.g., 'ja') is requested, it will also load and merge
+        any more specific regional variants (e.g., 'ja_JP'), with regional variants
+        taking precedence.
+        """
+        try:
+            with open(FileManager.TRANSLATION_FILE_PATH, 'r', encoding='utf-8') as f:
+                all_translations = load_json(f)
+        except FileNotFoundError:
+            print(f"Error: translation.json not found at {FileManager.TRANSLATION_FILE_PATH}")
+            FileManager._LOCALIZATION = {}
+            return
+        except load_json.JSONDecodeError: # Use load_json.JSONDecodeError for clarity
+            print(f"Error: Could not decode translation.json at {FileManager.TRANSLATION_FILE_PATH}")
+            FileManager._LOCALIZATION = {}
+            return
 
-        :param file: Localization file path, related to current file (in sources root).
-        """
-        with open(join(dirname(__file__), file), encoding="utf-8") as config_file:
-            data = load_json(config_file)
-        FileManager._LOCALIZATION = data[EM.LOCALE]
+        # Start with an empty dictionary for the current session's translations
+        current_translations: Dict[str, str] = {}
+
+        # Split the locale name to get the base language (e.g., 'ja' from 'ja_JP')
+        parts = locale_name.split('_')
+        base_language = parts[0]
+
+        # 1. Load the base language translations first
+        if base_language in all_translations:
+            current_translations.update(all_translations[base_language])
+
+        # 2. If a specific regional locale was requested (e.g., 'ja_JP'), load and merge it
+        # This handles cases where the user explicitly sets locale to 'ja_JP'
+        if locale_name != base_language and locale_name in all_translations:
+            current_translations.update(all_translations[locale_name])
+        elif locale_name == base_language:
+            # If only the base language was requested (e.g., 'ja'),
+            # iterate through all available locales to find and merge any regional variants
+            # that start with this base language (e.g., 'ja_JP', 'ja_KR')
+            for key, value in all_translations.items():
+                if key.startswith(f"{base_language}_") and key != base_language:
+                    current_translations.update(value)
+        
+        FileManager._LOCALIZATION = current_translations
 
     @staticmethod
     def t(key: str) -> str:
         """
         Translate string to current localization.
+        Falls back to the key itself if no translation is found.
 
         :param key: Localization key.
         :returns: Translation string.
         """
-        return FileManager._LOCALIZATION[key]
+        return FileManager._LOCALIZATION.get(key, key)
 
     @staticmethod
     def write_file(name: str, content: str, append: bool = False, assets: bool = False):
@@ -76,7 +113,7 @@ class FileManager:
             if content is None:
                 try:
                     return load_pickle(file)
-                except Exception:
+                except Exception: # Catching a general Exception for pickle errors
                     return None
             else:
                 dump_pickle(content, file)
